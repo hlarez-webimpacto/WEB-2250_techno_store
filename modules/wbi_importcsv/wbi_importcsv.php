@@ -428,7 +428,7 @@ class Wbi_importcsv extends Module
         $product->price = $this->calculatePrice($product->price);
 
         // IVA
-        $this->addIVA($product, $array['iva']);
+        $product->id_tax_rules_group = $this->getIVA($array['iva']);
 
         // Quantity
         $product->quantity = $array['quantity'];
@@ -547,7 +547,7 @@ class Wbi_importcsv extends Module
             $new_category = null;
             if( !$found_categories ) {  // Not found, create it
                 $link = Tools::link_rewrite( $category);
-                
+
                 $new_category = new Category();
                 $new_category->name = [$lang => $category];
                 $new_category->id_parent = $root_category->id;
@@ -566,17 +566,65 @@ class Wbi_importcsv extends Module
         }
     }
 
-    public function addIVA($product, $iva)
+    public function getIVA($iva)
     {
-        /*$tax_sql = "UPDATE 
-            ". _DB_PREFIX_ ."product, ". _DB_PREFIX_ ."product_shop 
-        SET 
-            ". _DB_PREFIX_ ."product.id_tax_rules_group = ". Configuration::get('PS_WHEELSEARCH_TAX_RULE_GROUP_21') . ",
-            ". _DB_PREFIX_ ."product_shop.id_tax_rules_group = ". Configuration::get('PS_WHEELSEARCH_TAX_RULE_GROUP_21') . "
-        WHERE 
-            ". _DB_PREFIX_ ."product.id_product = ". _DB_PREFIX_ ."product_shop.id_product AND
-            ". _DB_PREFIX_ ."product.id_product = " . $product->id;
+        $tax_name = "WEB IMPACTO IVA $iva%";
 
-        Db::getInstance()->execute($tax_sql);*/
+        // Search Tax Rule Group by name
+        $id_tax_rules_group = TaxRulesGroup::getIdByName($tax_name);
+
+        // Found rule
+        if( $id_tax_rules_group != false ) {
+            return $id_tax_rules_group;
+        } 
+
+        // There's no Tax Rule Group, create a new one
+        $lang = Context::getContext()->language->id;
+
+        // Create the Tax
+        $tax = new Tax();
+        $tax->name = [$lang => $tax_name];
+        $tax->rate = $iva;
+        $tax->active = true;
+        $tax->add();
+
+        // Then the group rule
+        $tax_rules_group = new TaxRulesGroup();
+        $tax_rules_group->active = true;
+        $tax_rules_group->name = $tax_name;
+        $tax_rules_group->add();
+
+        // Then the individual tax rules for each country / states
+        $countries = Country::getCountries($lang);
+        
+        $selected_countries = array();
+        foreach ($countries as $country) {
+            $selected_countries[] = (int) $country['id_country'];
+        }
+
+        $selected_states = array(0);
+        foreach ($selected_countries as $id_country) {
+
+            foreach ($selected_states as $id_state) {
+
+                $id_rule = null;
+                $zip_code = 0;
+
+                $tr = new TaxRule();
+
+                $tr->id_tax = $tax->id;
+                $tr->id_tax_rules_group = (int)$tax_rules_group->id;
+                $tr->id_country = (int)$id_country;
+                $tr->id_state = (int)$id_state;
+                list($tr->zipcode_from, $tr->zipcode_to) = $tr->breakDownZipCode($zip_code);
+                $tr->behavior = (int) 0;
+                $tr->description = '';
+                $tr->id = (int)$tax_rules_group->getIdTaxRuleGroupFromHistorizedId((int)$tr->id);
+                $tr->id_tax_rules_group = (int)$tax_rules_group->id;
+                $tr->save();
+            }
+        }
+
+        return $tax_rules_group->id_tax_rules_group;
     }
 }
